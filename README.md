@@ -25,8 +25,9 @@ The system bridges a high-speed data generator with a slower core routing networ
 * **UART TX Driver:** A custom Finite State Machine (FSM) transmitting data at 115200 baud rate. *Note: Tested by connecting the Basys 3 directly to an Android smartphone via a USB OTG adapter, viewing data in a serial terminal.*
 
 ## 📁 Repository Structure
-* `/src`: Contains all Verilog RTL modules (`.v`).
-* `/constraints`: Contains the physical constraint file (`.xdc`) mapped for the Basys 3 board.
+* `*.v` (root): Verilog RTL modules. The top level is `top_module.v`.
+* `Basys3_Master.xdc` (root): Physical constraint file mapped for the Basys 3 board.
+* `/verification`: SystemVerilog testbench for the asynchronous FIFO, with its own README.
 
 ## 🚀 Environment
 * **Hardware:** Digilent Basys 3 (Artix-7 FPGA)
