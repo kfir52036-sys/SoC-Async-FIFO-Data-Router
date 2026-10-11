@@ -1,66 +1,42 @@
-# Async FIFO Verification
+# Basys 3 FPGA: SoC & Async FIFO Data Router
 
-A class-based, layered SystemVerilog testbench for the `async_fifo` module (512 x 64-bit, 100 MHz write / ~27 MHz read).
+This project implements a complete System-on-Chip (SoC) architecture on a Digilent Basys 3 FPGA using Verilog. The primary focus of this design is managing Clock Domain Crossing (CDC) and routing data packets reliably across different clock frequencies to multiple peripheral interfaces.
 
-## Testbench Architecture
+## 🛠️ Architecture Overview
 
-```
-            environment
- ┌──────────────────────────────────────────────┐
- │  gen_wr ──mbx──┐                              │
- │                ├──► driver ──► fifo_if ──► DUT│
- │  gen_rd ──mbx──┘    (2 loops)     │           │
- │                                   ▼           │
- │            scoreboard ◄──mbx── monitor        │
- │                                (2 loops)      │
- └──────────────────────────────────────────────┘
-```
+The system bridges a high-speed data generator with a slower core routing network, outputting real-time data to four different physical interfaces.
 
-| Component | Role |
-|---|---|
-| `transaction` | Randomized `wr` / `rd` / 64-bit data, with weighted `dist` constraints |
-| `generator` | Two instances: one feeds the write stream, one feeds the read stream |
-| `driver` | Two independent loops: write side on `RX_CLK`, read side on `SYS_CLK` |
-| `monitor` | Two independent loops, one per clock domain, reporting what actually happened on the pins |
-| `scoreboard` | Reference model (queue) + data, ordering and flag checks |
-| `environment` | Builds and connects all components; runs `pre_test` / `test` / `post_test` |
+1. **Traffic Generator (100MHz):** Simulates high-speed incoming data packets.
+2. **Asynchronous FIFO:** Safely transfers data from the 100MHz RX domain to the 25MHz SYS domain, mitigating metastability using synchronized Gray counters.
+3. **Packet Parser:** Analyzes 64-bit packets, checks for errors (`HEADER_ERR`, `DATA_ERR`), and strips the 32-bit payload and 2-bit Destination ID.
+4. **Packet Router:** Uses a full `VALID`/`READY` handshake mechanism to route the payload to the designated peripheral.
+5. **Clocking Wizard (PLL):** Down-converts the 100MHz onboard oscillator (pin W5) to a stable 25MHz system clock.
 
-## What Is Tested
+## 📦 Packet Structure (64-bit)
+* `[63:62]` **Header**: `2'b10` (Validates packet start).
+* `[61:60]` **Destination ID**: Routes data to (00: 7-Segment, 01: VGA, 10: UART, 11: LEDs).
+* `[59:32]` **Reserved**: Set to zero for 64-bit alignment and future scalability (e.g., timestamps, priority flags).
+* `[31:0]` **Data**: 32-bit payload to be displayed/transmitted.
 
-**Stimulus**
-- Write and read sides run **fully independently**, each at its own clock rate. Back-to-back writes at 100 MHz are possible.
-- The two clocks have a **non-integer period ratio** (10 ns / 37 ns) plus a phase offset, so the relative edge position keeps changing during the test.
-- Each generator runs three phases: **mixed** (70% writes / 50% reads), **fill** (writes only), **drain** (reads only).
+## 🖥️ Peripherals (25MHz Domain)
+* **VGA Driver:** Handles sync signals and pixel generation for external monitors.
+* **7-Segment Driver:** Implements time-multiplexing to display 32-bit values across 4 physical digits.
+* **LED Driver:** Smart multiplexing to display segments of the data payload.
+* **UART TX Driver:** A custom Finite State Machine (FSM) transmitting data at 115200 baud rate. *Note: Tested by connecting the Basys 3 directly to an Android smartphone via a USB OTG adapter, viewing data in a serial terminal.*
 
-**Checks**
-| Check | Meaning |
-|---|---|
-| Data integrity | Every word read equals the oldest unread word written (FIFO order) |
-| OVERFLOW | The FIFO must never accept more than 512 words |
-| UNDERFLOW | `EMPTY=0` while nothing was written is an error |
-| FALSE FULL | `FULL=1` while the FIFO holds fewer than `DEPTH-SLACK` words |
-| FALSE EMPTY | `EMPTY=1` while the FIFO holds more than `SLACK` words |
-| Completeness | The test fails if FULL or EMPTY was never reached, or if data was left unread |
+## 📁 Repository Structure
+* `/src`: Contains all Verilog RTL modules (`.v`).
+* `/constraints`: Contains the physical constraint file (`.xdc`) mapped for the Basys 3 board.
 
-### Why `SLACK`?
-Each flag is computed in its own clock domain, from its own (up-to-date) pointer and the other side's pointer, which arrives through a 2-flop Gray-code synchronizer. So the flags are **late, but always in the safe direction**: `EMPTY` may stay high a few cycles after a write, and `FULL` may stay high a few cycles after a read, but never the opposite. `SLACK` (16 words) allows for this expected synchronization latency while still catching real flag bugs.
+## 🚀 Environment
+* **Hardware:** Digilent Basys 3 (Artix-7 FPGA)
+* **Software:** Xilinx Vivado
+* **Language:** Verilog
 
-## Bugs Found
+## ✅ Verification
+The asynchronous FIFO is verified with a class-based, layered SystemVerilog testbench (generator, driver, monitor, scoreboard, environment), located in [`/verification`](verification/).
+* Independent write and read streams, each at full speed in its own clock domain, with non-aligned clocks.
+* Checks data integrity, FIFO ordering, overflow/underflow, and FULL/EMPTY flag correctness.
+* The testbench found a read-latency mismatch between the RTL and the Block Memory IP configuration, which was then fixed.
 
-1. **Read data one word late (design / IP configuration).**
-   The scoreboard reported `DATA MISMATCH` on back-to-back reads: each read returned the previous word.
-   Root cause: the Block Memory Generator IP had *Primitives Output Register* enabled (read latency 2), while the RTL assumes read latency 1 (the read address is driven with `next_rptr_bin` to pre-fetch the next word).
-   Fix: disabled the output register in the IP. All mismatches disappeared.
-
-2. **Stuck `RX_VALID` at end of stimulus (testbench).**
-   After the last transaction, `RX_VALID` stayed at its last value, causing dozens of unintended writes.
-   Fix: each generator ends its stream with an idle transaction (`wr=0`, `rd=0`).
-
-## Running (Vivado XSim)
-
-1. Add `async_fifo.v`, `bin_to_gray.v` and the `fifo_bram` IP as design sources.
-2. Add `TB_HHTP.sv` as a simulation source and set `TB_HHTP` as top.
-3. **Important:** in the `fifo_bram` IP, *Port B Options*, keep **Primitives Output Register disabled** (read latency 1).
-4. Run Behavioral Simulation, then **Run All**. The scoreboard summary is printed at the end.
-
-Note: behavioral simulation verifies the logic (data, order, flags). Metastability itself cannot be observed in RTL simulation; CDC structure is checked separately with tools such as Vivado `report_cdc`.
+See [`verification/README.md`](verification/README.md) for details.
