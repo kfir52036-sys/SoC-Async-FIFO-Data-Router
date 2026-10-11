@@ -32,3 +32,11 @@ The system bridges a high-speed data generator with a slower core routing networ
 * **Hardware:** Digilent Basys 3 (Artix-7 FPGA)
 * **Software:** Xilinx Vivado
 * **Language:** Verilog
+
+## ✅ Verification
+The asynchronous FIFO is verified with a class-based, layered SystemVerilog testbench (generator, driver, monitor, scoreboard, environment), located in [`/verification`](verification/).
+* Independent write and read streams, each at full speed in its own clock domain, with non-aligned clocks.
+* Checks data integrity, FIFO ordering, overflow/underflow, and FULL/EMPTY flag correctness.
+* The testbench found a read-latency mismatch between the RTL and the Block Memory IP configuration, which was then fixed.
+
+See [`verification/README.md`](verification/README.md) for details.
